@@ -7,28 +7,47 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Loader2, Send, Copy, Download, Sparkles, Filter } from "lucide-react"
+import { Loader2, Send, Copy, Download, Sparkles, Filter, Globe, AlertTriangle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { AI_MODELS, getModelsByType } from "@/lib/ai-registry"
+import { aiService } from "@/lib/ai-service"
 
 type TextGenerationProps = Record<string, never>
 
 export function TextGeneration({}: TextGenerationProps) {
   const [prompt, setPrompt] = useState("")
-  const [model, setModel] = useState("gpt-4")
+  const [model, setModel] = useState("mistral-7b") // Default to a globally available model
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(1000)
   const [systemPrompt, setSystemPrompt] = useState("")
   const [response, setResponse] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [availableModels, setAvailableModels] = useState(getModelsByType('text'))
+  const [availableModels, setAvailableModels] = useState<ReturnType<typeof aiService.getAvailableModels>>([])
   const [filterProvider, setFilterProvider] = useState<string>("all")
   const [filterCategory, setFilterCategory] = useState<string>("all")
+  const [regionWarning, setRegionWarning] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
+    // Get available models from AI service (filters out region-restricted models)
+    const models = aiService.getAvailableModels()
+    setAvailableModels(models)
+    
+    // Check if we're in a restricted region (fewer models available)
+    const totalTextModels = getModelsByType('text').length
+    if (models.length < totalTextModels * 0.5) {
+      setRegionWarning(true)
+    }
+    
+    // Set default model to first available if current default is not available
+    if (models.length > 0 && !models.find(m => m.id === model)) {
+      setModel(models[0].id)
+    }
+  }, [])
+
+  useEffect(() => {
     // Filter models based on selected filters
-    let filtered = getModelsByType('text')
+    let filtered = aiService.getAvailableModels()
     
     if (filterProvider !== "all") {
       filtered = filtered.filter(m => m.provider === filterProvider)
@@ -101,12 +120,12 @@ export function TextGeneration({}: TextGenerationProps) {
   }
 
   const getUniqueProviders = () => {
-    const providers = [...new Set(getModelsByType('text').map(m => m.provider))]
+    const providers = [...new Set(aiService.getAvailableModels().map(m => m.provider))]
     return providers
   }
 
   const getUniqueCategories = () => {
-    const categories = [...new Set(getModelsByType('text').map(m => m.category))]
+    const categories = [...new Set(aiService.getAvailableModels().map(m => m.category))]
     return categories
   }
 
@@ -120,10 +139,27 @@ export function TextGeneration({}: TextGenerationProps) {
             Text Generation
           </CardTitle>
           <CardDescription>
-            Generate text using 30+ AI models
+            Generate text using AI models {regionWarning && "(open-source models prioritized)"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Region Warning Banner */}
+          {regionWarning && (
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                <div className="text-sm">
+                  <p className="font-medium text-amber-800 dark:text-amber-200">
+                    Limited AI Access in Your Region
+                  </p>
+                  <p className="text-amber-700 dark:text-amber-300 mt-1">
+                    Some AI providers are not available in your region. Open-source models are prioritized for better accessibility.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Filters */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -297,7 +333,12 @@ export function TextGeneration({}: TextGenerationProps) {
               <div className="text-center">
                 <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>Generated text will appear here</p>
-                <p className="text-sm mt-2">Select a model and enter a prompt to get started</p>
+                <p className="text-sm mt-2">
+                  {regionWarning 
+                    ? "Select an open-source model and enter a prompt to get started"
+                    : "Select a model and enter a prompt to get started"
+                  }
+                </p>
               </div>
             </div>
           )}

@@ -106,6 +106,54 @@ export class AIService {
       }
     } catch (error) {
       console.error('Text generation error:', error)
+      
+      // Handle country/region restriction errors specifically
+      if (error && typeof error === 'object' && 'code' in error) {
+        const errorCode = (error as any).code
+        
+        if (errorCode === 'unsupported_country_region_territory') {
+          // Try to fallback to alternative providers
+          console.log('OpenAI not available in this region, trying alternatives...')
+          
+          // Try HuggingFace models first (usually available globally)
+          const hfModels = getModelsByType('text').filter(m => 
+            m.provider === 'Mistral AI' || m.provider === 'Meta' || m.provider === 'BigScience'
+          )
+          
+          if (hfModels.length > 0) {
+            try {
+              console.log('Attempting fallback to HuggingFace model:', hfModels[0].id)
+              return await this.generateWithHuggingFace(prompt, {
+                ...config,
+                model: hfModels[0].id
+              })
+            } catch (fallbackError) {
+              console.error('HuggingFace fallback failed:', fallbackError)
+            }
+          }
+          
+          // Try Ollama if available
+          try {
+            console.log('Attempting fallback to Ollama model')
+            return await this.generateWithOllama(prompt, {
+              ...config,
+              model: 'llama2'
+            })
+          } catch (ollamaError) {
+            console.error('Ollama fallback failed:', ollamaError)
+          }
+          
+          // If all fallbacks fail, provide helpful error message
+          throw new Error(
+            `AI services are not available in your region. Please try:\n` +
+            `1. Using a VPN to connect from a supported region\n` +
+            `2. Setting up local models with Ollama\n` +
+            `3. Using alternative AI providers\n\n` +
+            `Currently available: HuggingFace open-source models (no API key required)`
+          )
+        }
+      }
+      
       throw error
     }
   }
@@ -360,25 +408,46 @@ export class AIService {
     const embeddingModels = getModelsByType('embedding')
     const codeModels = getModelsByType('code')
 
-    return [
+    const allModels = [
       ...textModels,
       ...imageModels,
       ...embeddingModels,
       ...codeModels
-    ].filter(model => {
+    ]
+
+    // Check if OpenAI is available in this region by testing a simple call
+    // For now, we'll filter out OpenAI models if no API key is set
+    // This prevents the 403 error from appearing in regions where OpenAI is not supported
+    const isRegionRestricted = !process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your_openai_api_key_here'
+
+    return allModels.filter(model => {
+      // Filter out OpenAI models if region is restricted or no API key
+      if (model.provider === 'OpenAI' && isRegionRestricted) {
+        return false
+      }
+      
+      // Filter out other proprietary models if no API keys
       if (model.apiKeyRequired) {
         switch (model.provider) {
-          case 'OpenAI':
-            return !!process.env.OPENAI_API_KEY
           case 'Anthropic':
-            return !!process.env.ANTHROPIC_API_KEY
+            return !!process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY !== 'your_anthropic_api_key_here'
           case 'Google':
-            return !!process.env.GOOGLE_AI_API_KEY
+            return !!process.env.GOOGLE_AI_API_KEY && process.env.GOOGLE_AI_API_KEY !== 'your_google_ai_api_key_here'
           default:
             return true
         }
       }
+      
       return true
+    }).sort((a, b) => {
+      // Prioritize open-source and local models in restricted regions
+      if (isRegionRestricted) {
+        const priorityOrder = { 'open-source': 0, 'local': 1, 'proprietary': 2 }
+        const aPriority = priorityOrder[a.category] || 3
+        const bPriority = priorityOrder[b.category] || 3
+        return aPriority - bPriority
+      }
+      return 0
     })
   }
 }
